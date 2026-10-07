@@ -1,0 +1,11 @@
+assistant | ¡Hola! ¿Cómo va? Soy Sosti, del taller Tecnocar. Estoy para darte una mano con lo que necesites.
+
+Por ahora puedo armarte presupuesto de **cambio de batería** y, si querés, coordinar el turno para colocarla (en el taller o a domicilio).
+
+¿Qué necesitás?
+---
+user | Como es tu nombreM
+---
+assistant | Me llamo **Sosti**, soy del equipo de Tecnocar. 🙂
+
+¿Te armo un presupuesto de cambio de batería o querés coordinar un turno?

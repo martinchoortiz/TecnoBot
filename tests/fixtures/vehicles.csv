@@ -1,0 +1,6 @@
+id,brand,model,year_from,year_to,generation,trim,engine,transmission
+VEH-VENTO-25,volkswagen,vento,2011,2018,mk6,,2.5,
+VEH-VENTO-TSI,volkswagen,vento,2011,2018,mk6,,2.0 tsi,
+VEH-VENTO-TDI,volkswagen,vento,2011,2018,mk6,,2.0 tdi,
+VEH-COROLLA,toyota,corolla,2014,2019,,,,
+VEH-ASTRA,chevrolet,astra,2010,2016,,,,

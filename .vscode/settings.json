@@ -1,0 +1,11 @@
+{
+  "sqltools.useNodeRuntime": true,
+  "sqltools.connections": [
+    {
+      "name": "TecnoBot (SQLite)",
+      "driver": "SQLite",
+      "database": "${workspaceFolder}/tecnobot.db",
+      "group": "local"
+    }
+  ]
+}
