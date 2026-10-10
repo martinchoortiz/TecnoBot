@@ -16,6 +16,20 @@ from app.db.session import get_engine, init_db
 logger = logging.getLogger(__name__)
 
 
+def _configure_console_logging() -> None:
+    app_logger = logging.getLogger("app")
+    app_logger.setLevel(logging.INFO)
+    app_logger.propagate = False
+    if app_logger.handlers:
+        return
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(levelname)s:     %(message)s"))
+    app_logger.addHandler(handler)
+
+
+_configure_console_logging()
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_db(get_engine())

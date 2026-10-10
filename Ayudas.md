@@ -8,7 +8,7 @@ es el numero de sandbox de kapso
 
 # PASOS:
  1. Cargar saldo en DeepSeek y probar de punta a punta en WhatsApp el camino feliz (Vento 2014 → motor → precio → taller/domicilio → Coordinar Turno). ✅
- 2. Completar el catálogo real de baterías (precios y fits de Tecnocar), no el JSON de ejemplo.
+ 2. Completar el catálogo real de baterías (precios y fits de Tecnocar), no el JSON de ejemplo.✅
  3. Afinar el prompt con conversaciones reales (typos, “versión” vs motor, el cliente tira todo junto).
  4. Cerrar huecos de internal_error: parseo del webhook y fallos al arrancar.
  5. Handoff Kapso de verdad: que el empleado vea el hilo en el inbox, pueda escribir, y “Resume from Handoff” vuelva el bot (active).

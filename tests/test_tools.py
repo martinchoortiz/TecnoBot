@@ -54,3 +54,24 @@ async def test_coordinar_turno_handoff(session: Session) -> None:
     session.refresh(conv)
     assert conv.state == ConversationState.HANDED_OFF.value
     assert conv.vehicle_slots["lugar_colocacion"] == "domicilio"
+
+
+@pytest.mark.asyncio
+async def test_coordinar_turno_mecanica_siempre_taller(session: Session) -> None:
+    store = ConversationStore(session)
+    conv = store.get_or_create(
+        IncomingMessage(conversation_ref="c3", text="x", message_id="m3", from_phone="1")
+    )
+    store.save_quote(conv.id, "atencion_mecanica", {"marca": "Ford"}, 100000.0, "estimación")
+    channel = FakeChannel()
+    result = await execute_tool(
+        "coordinar_turno",
+        {"lugar_colocacion": "domicilio"},
+        store=store,
+        conversation=conv,
+        channel=channel,
+    )
+    assert result["lugar_colocacion"] == "taller"
+    session.refresh(conv)
+    assert conv.vehicle_slots["lugar_colocacion"] == "taller"
+    assert "turno:taller" in channel.handoffs[0][1]

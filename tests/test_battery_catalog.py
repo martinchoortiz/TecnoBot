@@ -24,11 +24,28 @@ def test_unknown_is_none(catalog_fixture) -> None:
     assert lookup({"marca": "Ferrari", "modelo": "F40", "anio": "1992"})["status"] == "none"
 
 
-def test_vehicle_can_have_multiple_batteries(catalog_fixture) -> None:
+def test_all_batteries_apply_returns_every_option(catalog_fixture) -> None:
     result = lookup({"marca": "Chevrolet", "modelo": "Astra", "anio": "2014"})
-    assert result["status"] == "need_slots"
-    assert result["missing"] == ["bateria"]
-    assert result["options"]["bateria"] == ["12V 60Ah", "12V 70Ah"]
+    assert result["status"] == "ok"
+    assert result["multiple"] is True
+    assert [(o["bateria"], o["price"]) for o in result["opciones"]] == [
+        ("12V 60Ah", 165000),
+        ("12V 70Ah", 185000),
+    ]
+
+
+def test_multiple_options_quote_has_no_single_price(catalog_fixture) -> None:
+    quote = BatteryChangeSkill().calculate_quote({"marca": "Chevrolet", "modelo": "Astra", "anio": "2014"})
+    assert quote["status"] == "ok"
+    assert quote["price"] is None
+    assert len(quote["opciones"]) == 2
+
+
+def test_customer_battery_narrows_to_single_price(catalog_fixture) -> None:
+    result = lookup({"marca": "Chevrolet", "modelo": "Astra", "anio": "2014", "bateria": "12V 70Ah"})
+    assert result["status"] == "ok"
+    assert result["price"] == 185000
+    assert "multiple" not in result
 
 
 def test_skill_missing_then_quote(catalog_fixture) -> None:

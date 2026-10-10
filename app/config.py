@@ -16,6 +16,9 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite:///./tecnobot.db"
     echo_mode: bool = True
+    labor_hourly_rate_ars: float = 0
+    # Horas que se reutiliza una estimación mecánica para el mismo vehículo y trabajo. 0 = sin caché.
+    estimate_cache_ttl_hours: float = 24
 
 
 settings = Settings()

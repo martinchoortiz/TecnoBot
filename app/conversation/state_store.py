@@ -106,6 +106,13 @@ class ConversationStore:
         self.session.refresh(quote)
         return quote
 
+    def last_quote(self, conversation_id: str) -> Quote | None:
+        return self.session.exec(
+            select(Quote)
+            .where(Quote.conversation_id == conversation_id)
+            .order_by(Quote.created_at.desc())
+        ).first()
+
     def set_state(self, conversation_id: str, state: ConversationState) -> None:
         conv = self.session.get(Conversation, conversation_id)
         if not conv:

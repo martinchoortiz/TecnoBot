@@ -13,7 +13,9 @@ VEHICLES_PATH = DATA_DIR / "vehicles.csv"
 VEHICLE_BATTERIES_PATH = DATA_DIR / "vehicle_batteries.csv"
 
 SLOT_KEYS = ("marca", "modelo", "anio", "generacion", "trim", "motor", "transmision", "linea", "bateria")
-DISCRIMINATORS = ("generacion", "trim", "motor", "transmision", "linea", "bateria")
+# Atributos del auto que se le piden al cliente. `linea` y `bateria` no: si todas las
+# baterías aplican, se cotizan todas en vez de pedirle que elija.
+DISCRIMINATORS = ("generacion", "trim", "motor", "transmision")
 
 
 def _fold(value: str) -> str:
@@ -138,10 +140,22 @@ def lookup(slots: dict[str, Any]) -> dict[str, Any]:
     if not rows:
         return {"status": "none"}
 
-    prices = {row["price"] for row in rows}
-    baterias = {row.get("bateria") for row in rows}
-    if len(prices) == 1 and len(baterias) == 1:
-        row = rows[0]
+    choices = _distinct_batteries(rows)
+    if len(choices) > 1:
+        # Primero: ¿algún atributo del auto separa las baterías (no aplican todas)?
+        option_keys = list(DISCRIMINATORS)
+        if len({_norm(row.get("modelo")) for row in rows}) > 1:
+            option_keys = ["modelo", *option_keys]
+        for key in option_keys:
+            if _norm(slots.get(key)):
+                continue
+            values = sorted({str(row[key]) for row in rows if _norm(row.get(key))})
+            if len(values) > 1 and _splits_batteries(rows, key, values):
+                return {"status": "need_slots", "missing": [key], "options": {key: values}}
+
+    # Todas las baterías restantes aplican al auto: se informa el total de cada una.
+    if len(choices) == 1:
+        row = choices[0]
         return {
             "status": "ok",
             "price": row["price"],
@@ -149,19 +163,35 @@ def lookup(slots: dict[str, Any]) -> dict[str, Any]:
             "bateria": row.get("bateria"),
             "linea": row.get("linea"),
         }
+    opciones = [
+        {
+            "bateria": row.get("bateria"),
+            "linea": row.get("linea"),
+            "price": row["price"],
+            "detail": row.get("detail") or "",
+        }
+        for row in choices
+    ]
+    return {
+        "status": "ok",
+        "price": None,
+        "multiple": True,
+        "opciones": opciones,
+        "detail": " / ".join(f"{o['detail']}: ${o['price']:,}".replace(",", ".") for o in opciones),
+    }
 
-    option_keys = list(DISCRIMINATORS)
-    if len({_norm(row.get("modelo")) for row in rows}) > 1:
-        option_keys = ["modelo", *option_keys]
 
-    missing: list[str] = []
-    options: dict[str, list[str]] = {}
-    for key in option_keys:
-        if _norm(slots.get(key)):
-            continue
-        values = sorted({str(row[key]) for row in rows if _norm(row.get(key))})
-        if len(values) > 1:
-            missing.append(key)
-            options[key] = values
-            break
-    return {"status": "need_slots", "missing": missing, "options": options}
+def _distinct_batteries(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: dict[tuple[str, str, int], dict[str, Any]] = {}
+    for row in rows:
+        seen.setdefault((str(row.get("linea")), str(row.get("bateria")), int(row["price"])), row)
+    return sorted(seen.values(), key=lambda r: (r["price"], str(r.get("bateria"))))
+
+
+def _splits_batteries(rows: list[dict[str, Any]], key: str, values: list[str]) -> bool:
+    """True si elegir un valor de `key` deja un conjunto de baterías distinto que otro valor."""
+    sets = set()
+    for value in values:
+        subset = [r for r in rows if _norm(r.get(key)) in ("", _norm(value))]
+        sets.add(frozenset((r.get("linea"), r.get("bateria"), r["price"]) for r in subset))
+    return len(sets) > 1

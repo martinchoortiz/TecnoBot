@@ -1,6 +1,6 @@
 # TecnoBot
 
-Bot de WhatsApp de Tecnocar (presupuesto de batería ahora; neumáticos y mecánica después).
+Bot de WhatsApp de Tecnocar (presupuesto de batería y estimación mecánica; neumáticos después).
 
 ## Setup local
 
@@ -41,7 +41,7 @@ En Kapso, el webhook del número debe incluir `whatsapp.message.received` y `wha
 
 `POST /webhooks/kapso`
 
-Mientras `ECHO_MODE=true`, responde eco. Con `ECHO_MODE=false` y `LLM_API_KEY`, usa DeepSeek para batería / handoff / Coordinar Turno.
+Mientras `ECHO_MODE=true`, responde eco. Con `ECHO_MODE=false` y `LLM_API_KEY`, usa DeepSeek para batería, estimación mecánica, handoff y Coordinar Turno. `LABOR_HOURLY_RATE_ARS` es la hora de mano de obra del taller para la estimación mecánica.
 
 ## Sobre el codigo
 

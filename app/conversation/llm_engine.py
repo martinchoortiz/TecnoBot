@@ -18,8 +18,10 @@ TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "cotizar_bateria",
             "description": (
-                "Busca precio de cambio de batería. Pasá los datos del auto que ya tengas; "
-                "el catálogo indica si faltan campos."
+                "Busca precio de cambio de batería. Pasá los datos del auto que ya tengas "
+                "(también los que el cliente dio antes en la conversación); "
+                "el catálogo indica si faltan campos. Si hay varias baterías que le sirven al auto, "
+                "devuelve `opciones` con el total de cada una."
             ),
             "parameters": {
                 "type": "object",
@@ -33,11 +35,11 @@ TOOLS: list[dict[str, Any]] = [
                     "transmision": {"type": "string"},
                     "linea": {
                         "type": "string",
-                        "description": "Línea Heliar si el catálogo la pide, ej. Heliar Servicio",
+                        "description": "Solo si el cliente dice qué línea Heliar tiene, ej. Heliar Servicio",
                     },
                     "bateria": {
                         "type": "string",
-                        "description": "Código Heliar si el catálogo lo pide, ej. F70ND",
+                        "description": "Solo si el cliente dice qué batería tiene, ej. F70ND",
                     },
                 },
             },
@@ -46,10 +48,61 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "cotizar_mecanica_ia",
+            "description": (
+                "Estimá un arreglo mecánico o el cambio de una pieza. "
+                "Llamala cuando el cliente tiene un problema en el vehículo o quiere cotizar "
+                "ese arreglo o recambio, y el trabajo es concreto. Si es un síntoma sin causa conocida "
+                "o el cliente pide una revisión, no la llames: ofrecé turno de revisión. "
+                "No la uses para batería ni neumáticos. "
+                "Busca en internet y devuelve una estimación, no un precio cerrado. "
+                "Si viene un rango, pasalo tal cual al cliente. "
+                "Si devuelve requiere_revision, no des precio: ofrecé revisión en el taller. "
+                "Si devuelve need_slots, preguntá solo esos datos y volvé a llamarla; no derives todavía."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "descripcion_problema": {
+                        "type": "string",
+                        "description": (
+                            "El trabajo pedido, corto y neutro, con las palabras del cliente "
+                            "(ej. 'cambio de aceite de caja automática'). No repitas marca, modelo, "
+                            "año ni motor, y no agregues cantidades ni piezas que el cliente no dijo."
+                        ),
+                    },
+                    "valor_hora_mano_de_obra": {
+                        "type": "number",
+                        "description": "Pesos argentinos por hora de mano de obra del taller",
+                    },
+                    "marca": {"type": "string"},
+                    "modelo": {"type": "string"},
+                    "anio": {"type": "string", "description": "Año del auto, ej. 2014"},
+                    "generacion": {"type": "string"},
+                    "trim": {"type": "string", "description": "Versión comercial, ej. Comfortline"},
+                    "motor": {"type": "string", "description": "Motorización, ej. 1.6"},
+                    "transmision": {"type": "string"},
+                },
+                "required": [
+                    "descripcion_problema",
+                    "valor_hora_mano_de_obra",
+                    "marca",
+                    "modelo",
+                    "anio",
+                ],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "coordinar_turno",
             "description": (
-                "Pasa el hilo a un empleado para agendar colocación. "
-                "Usar después de cotizar, o si el cliente ya quiere turno. No inventar horarios."
+                "Pasa el hilo a un empleado para agendar. "
+                "Usarla después de cotizar batería, o cuando el cliente confirma una estimación "
+                "mecánica y quiere turno: el empleado da el precio exacto y agenda. "
+                "Los trabajos mecánicos son siempre en el taller (lugar_colocacion=taller). "
+                "No inventar horarios."
             ),
             "parameters": {
                 "type": "object",
@@ -80,7 +133,20 @@ TOOLS: list[dict[str, Any]] = [
 
 
 def load_system_prompt() -> str:
-    return PROMPT_PATH.read_text(encoding="utf-8").strip()
+    text = PROMPT_PATH.read_text(encoding="utf-8").strip()
+    rate = float(settings.labor_hourly_rate_ars or 0)
+    if rate > 0:
+        shown = str(int(rate)) if rate == int(rate) else str(rate)
+        note = (
+            f"Hora de mano de obra del taller: {shown} pesos argentinos. "
+            f"En `cotizar_mecanica_ia` pasá `valor_hora_mano_de_obra` = {shown}."
+        )
+    else:
+        note = (
+            "Hora de mano de obra del taller: no está configurada. "
+            "No llames `cotizar_mecanica_ia` con un valor inventado; derivá a un empleado."
+        )
+    return f"{text}\n\n{note}"
 
 
 def build_client() -> OpenAI:

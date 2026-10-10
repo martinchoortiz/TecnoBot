@@ -38,7 +38,7 @@ class BatteryChangeSkill(Skill):
         result = lookup(slots)
         if result.get("status") != "ok":
             return result
-        return {
+        quote = {
             "status": "ok",
             "price": result["price"],
             "detail": result.get("detail"),
@@ -46,3 +46,7 @@ class BatteryChangeSkill(Skill):
             "linea": result.get("linea"),
             "slots": {k: slots.get(k) for k in VEHICLE_SLOTS if slots.get(k)},
         }
+        if result.get("multiple"):
+            quote["multiple"] = True
+            quote["opciones"] = result["opciones"]
+        return quote
