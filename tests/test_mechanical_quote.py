@@ -12,6 +12,7 @@ from app.conversation.tools import execute_tool
 from app.models.conversation import Quote
 from app.skills.mechanical_estimator import (
     ESTIMATE_DISCLAIMER,
+    PLUS_TAX,
     assemble_quote,
     build_search_input,
     build_search_queries,
@@ -250,6 +251,7 @@ def test_assemble_sums_parts_and_labor(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result["es_rango"] is False
     assert result["total_min"] == result["total_max"] == 75000
     assert "entre" not in result["detail"]
+    assert f"Total estimado: $75.000, {PLUS_TAX}." in result["detail"]
     assert result["aviso"] == ESTIMATE_DISCLAIMER
     assert result["detail"].endswith(ESTIMATE_DISCLAIMER)
     assert "Cambio de pastillas" in result["descripcion"]
@@ -279,7 +281,7 @@ def test_range_is_what_the_client_hears(monkeypatch: pytest.MonkeyPatch) -> None
     assert result["total_max"] == 90000
     assert "entre $40.000 y $50.000" in result["detail"]
     assert "entre 1 h y 2 h" in result["detail"]
-    assert "Total estimado: entre $60.000 y $90.000." in result["detail"]
+    assert f"Total estimado: entre $60.000 y $90.000, {PLUS_TAX}." in result["detail"]
     assert result["detail"].endswith(ESTIMATE_DISCLAIMER)
 
 
@@ -489,8 +491,12 @@ def test_prompt_tells_controller_when_to_quote(monkeypatch: pytest.MonkeyPatch) 
     assert "necesita_detalle" in load_estimator_prompt()
     assert "es_rango" in text
     assert "total_min" in text
+    assert "más impuestos" in text
+    assert "No indiques el porcentaje ni el importe de impuestos" in text
+    assert "sin impuestos" in load_estimator_prompt()
     assert "18000" in text
     tool = next(item["function"] for item in TOOLS if item["function"]["name"] == "cotizar_mecanica_ia")
+    assert "más impuestos" in tool["description"]
     assert "problema en el vehículo" in tool["description"]
     assert "need_slots" in tool["description"]
     assert tool["parameters"]["required"] == [

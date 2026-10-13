@@ -26,6 +26,7 @@ ESTIMATOR_TEMPERATURE = 0.0
 _CACHE: dict[str, dict[str, Any]] = {}
 _CACHE_LOCK = threading.Lock()
 ESTIMATE_DISCLAIMER = "Es una estimación y está sujeta a verificación final."
+PLUS_TAX = "más impuestos"
 SearchFn = Callable[[str], list[dict[str, str]]]
 
 SLOT_KEYS = (
@@ -213,7 +214,7 @@ def assemble_quote(slots: dict[str, Any], payload: dict[str, Any]) -> dict[str, 
         f"{descripcion} "
         f"Repuestos estimados: {parts_bit}. "
         f"Mano de obra: {_hours_span(hours_low, hours_high)} × {_money(rate_pesos)} = {_money_span(labor_min, labor_max)}. "
-        f"Total estimado: {_money_span(total_min, total_max)}. "
+        f"Total estimado: {_money_span(total_min, total_max)}, {PLUS_TAX}. "
         f"{ESTIMATE_DISCLAIMER}"
     )
     quote: dict[str, Any] = {

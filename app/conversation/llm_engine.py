@@ -57,6 +57,7 @@ TOOLS: list[dict[str, Any]] = [
                 "No la uses para batería ni neumáticos. "
                 "Busca en internet y devuelve una estimación, no un precio cerrado. "
                 "Si viene un rango, pasalo tal cual al cliente. "
+                "El total es siempre más impuestos: decilo así y no aclares el porcentaje ni el importe. "
                 "Si devuelve requiere_revision, no des precio: ofrecé revisión en el taller. "
                 "Si devuelve need_slots, preguntá solo esos datos y volvé a llamarla; no derives todavía."
             ),
