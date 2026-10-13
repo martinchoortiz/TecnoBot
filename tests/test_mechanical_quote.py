@@ -434,6 +434,13 @@ def test_symptom_needing_inspection_gets_no_price(monkeypatch: pytest.MonkeyPatc
     assert again["status"] == "ok"
 
 
+def test_prompt_requires_formal_address() -> None:
+    text = load_system_prompt()
+    assert "Siempre de usted" in text
+    assert "Importante:" in text
+    assert "qué bajón" in text
+
+
 def test_prompts_split_concrete_jobs_from_symptoms() -> None:
     text = load_system_prompt()
     assert "requiere_revision" in text
@@ -454,6 +461,23 @@ def test_unreadable_estimate(monkeypatch: pytest.MonkeyPatch) -> None:
     client = _Client("no pude calcularlo")
     result = estimate_repair(SLOTS, client=client, search=_search)
     assert result == {"status": "error", "error": "estimacion_invalida"}
+
+
+def test_prompt_states_home_battery_revision_fee(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "battery_revision_fee_ars", 15000)
+    text = load_system_prompt()
+    assert "Cargo de revisión técnica a domicilio (batería): 15000 pesos argentinos." in text
+    assert "se descuenta del pago final" in text
+    assert "Siempre que ofrezcas la revisión a domicilio" in text
+    tool = next(item["function"] for item in TOOLS if item["function"]["name"] == "coordinar_turno")
+    assert "cargo de revisión técnica" in tool["description"]
+
+
+def test_prompt_does_not_invent_revision_fee(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "battery_revision_fee_ars", 0)
+    text = load_system_prompt()
+    assert "Cargo de revisión técnica a domicilio (batería): no está configurado." in text
+    assert "No inventes un monto." in text
 
 
 def test_prompt_tells_controller_when_to_quote(monkeypatch: pytest.MonkeyPatch) -> None:

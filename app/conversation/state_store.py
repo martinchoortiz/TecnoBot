@@ -122,6 +122,19 @@ class ConversationStore:
         self.session.add(conv)
         self.session.commit()
 
+    def set_service_address(self, conversation_id: str, direccion: str, departamento: str) -> None:
+        conv = self.session.get(Conversation, conversation_id)
+        if not conv:
+            return
+        slots = dict(conv.vehicle_slots or {})
+        slots["direccion"] = direccion
+        slots["departamento"] = departamento
+        conv.vehicle_slots = slots
+        conv.updated_at = datetime.now(UTC)
+        flag_modified(conv, "vehicle_slots")
+        self.session.add(conv)
+        self.session.commit()
+
     def set_lugar_colocacion(self, conversation_id: str, lugar: str) -> None:
         conv = self.session.get(Conversation, conversation_id)
         if not conv:

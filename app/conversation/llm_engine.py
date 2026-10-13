@@ -102,6 +102,18 @@ TOOLS: list[dict[str, Any]] = [
                 "Usarla después de cotizar batería, o cuando el cliente confirma una estimación "
                 "mecánica y quiere turno: el empleado da el precio exacto y agenda. "
                 "Los trabajos mecánicos son siempre en el taller (lugar_colocacion=taller). "
+                "Si es a domicilio (lugar_colocacion=domicilio) hace falta `direccion` y `departamento` "
+                "del cliente: solo se hacen visitas en el Gran San Juan (San Juan Capital, Rivadavia, "
+                "Rawson, Chimbas, Santa Lucía). Si devuelve need_slots, pedí lo que falta; si devuelve "
+                "fuera_de_zona, avisá que no se hacen visitas técnicas en esa localidad (no hay handoff) "
+                "y ofrecé solamente la atención en el taller. "
+                "En taller no se pide dirección ni se valida zona. "
+                "Si el auto no arranca o se sospecha de la batería y el cliente quiere que la revisen, "
+                "usá tipo_turno=revision_bateria: la revisión puede ser a domicilio (con las mismas "
+                "reglas de zona) o en el taller. "
+                "Al ofrecer la revisión a domicilio, informá siempre el cargo de revisión técnica "
+                "del final de las instrucciones: si el problema no es la batería se abona; "
+                "si se cambia la batería, se descuenta del pago final. En el taller no hay ese cargo. "
                 "No inventar horarios."
             ),
             "parameters": {
@@ -110,6 +122,26 @@ TOOLS: list[dict[str, Any]] = [
                     "lugar_colocacion": {
                         "type": "string",
                         "enum": ["taller", "domicilio"],
+                    },
+                    "direccion": {
+                        "type": "string",
+                        "description": "Dirección que dio el cliente (calle, número, barrio/localidad). Solo para domicilio.",
+                    },
+                    "departamento": {
+                        "type": "string",
+                        "description": (
+                            "Departamento o localidad de San Juan de esa dirección, tal como lo dijo el "
+                            "cliente o lo deducís con seguridad (ej. 'Rawson', 'Capital'). "
+                            "Si no lo sabés, no lo inventes: preguntalo. Solo para domicilio."
+                        ),
+                    },
+                    "tipo_turno": {
+                        "type": "string",
+                        "enum": ["colocacion", "revision_bateria"],
+                        "description": (
+                            "`revision_bateria` cuando el turno es para revisar la batería "
+                            "(no arranca / se sospecha de la batería). Si no, omitilo."
+                        ),
                     },
                     "nota": {"type": "string"},
                 },
@@ -132,21 +164,45 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 
-def load_system_prompt() -> str:
-    text = PROMPT_PATH.read_text(encoding="utf-8").strip()
+def _pesos(amount: float) -> str:
+    return str(int(amount)) if amount == int(amount) else str(amount)
+
+
+def _labor_note() -> str:
     rate = float(settings.labor_hourly_rate_ars or 0)
     if rate > 0:
-        shown = str(int(rate)) if rate == int(rate) else str(rate)
-        note = (
+        shown = _pesos(rate)
+        return (
             f"Hora de mano de obra del taller: {shown} pesos argentinos. "
             f"En `cotizar_mecanica_ia` pasá `valor_hora_mano_de_obra` = {shown}."
         )
-    else:
-        note = (
-            "Hora de mano de obra del taller: no está configurada. "
-            "No llames `cotizar_mecanica_ia` con un valor inventado; derivá a un empleado."
+    return (
+        "Hora de mano de obra del taller: no está configurada. "
+        "No llames `cotizar_mecanica_ia` con un valor inventado; derivá a un empleado."
+    )
+
+
+def _revision_fee_note() -> str:
+    fee = float(settings.battery_revision_fee_ars or 0)
+    if fee > 0:
+        shown = _pesos(fee)
+        return (
+            f"Cargo de revisión técnica a domicilio (batería): {shown} pesos argentinos. "
+            "Al ofrecer esa revisión, informalo siempre con 'Importante:', con ese monto. "
+            "Si el problema no es la batería, el cliente abona esa asistencia técnica. "
+            "Si cambia la batería, ese importe se descuenta del pago final. "
+            "En el taller no hay ese cargo. No inventes otro monto."
         )
-    return f"{text}\n\n{note}"
+    return (
+        "Cargo de revisión técnica a domicilio (batería): no está configurado. "
+        "No inventes un monto. Igual avisá que, si el problema no es la batería, "
+        "se abona la asistencia técnica, y que si se cambia la batería ese cargo se descuenta del pago final."
+    )
+
+
+def load_system_prompt() -> str:
+    text = PROMPT_PATH.read_text(encoding="utf-8").strip()
+    return f"{text}\n\n{_labor_note()}\n{_revision_fee_note()}"
 
 
 def build_client() -> OpenAI:

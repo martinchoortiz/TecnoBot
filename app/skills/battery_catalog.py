@@ -3,9 +3,12 @@ from __future__ import annotations
 import csv
 import unicodedata
 from collections import defaultdict
+from decimal import ROUND_HALF_UP, Decimal
 from functools import cache
 from pathlib import Path
 from typing import Any
+
+from app.config import settings
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 BATTERIES_PATH = DATA_DIR / "batteries.csv"
@@ -70,7 +73,7 @@ def _detail(battery: dict[str, Any]) -> str:
     bits = [title]
     if battery.get("model"):
         bits.append(str(battery["model"]))
-    return " ".join(bits) + " + colocación"
+    return " ".join(bits)
 
 
 @cache
@@ -135,8 +138,18 @@ def _matches_entry(entry: dict[str, Any], slots: dict[str, Any]) -> bool:
     return True
 
 
+def final_price(catalog_price: int | float) -> int:
+    """Precio al cliente: precio de catálogo * (1 + margen). Sin costo de colocación."""
+    margin = Decimal(str(settings.battery_margin_pct)) / 100
+    return int((Decimal(str(catalog_price)) * (1 + margin)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
 def lookup(slots: dict[str, Any]) -> dict[str, Any]:
-    rows = [row for row in load_catalog() if _matches_entry(row, slots)]
+    rows = [
+        {**row, "price": final_price(row["price"])}
+        for row in load_catalog()
+        if _matches_entry(row, slots)
+    ]
     if not rows:
         return {"status": "none"}
 

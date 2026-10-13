@@ -6,15 +6,19 @@ import logging
 from typing import Any
 
 from app.channel.base import ChannelPort
+from app.config import settings
 from app.conversation.state_store import ConversationStore
 from app.models.conversation import Conversation, ConversationState
 from app.skills.battery_change import BatteryChangeSkill, VEHICLE_SLOTS
 from app.skills.mechanical_service import MECHANICAL_SLOTS, MechanicalServiceSkill
+from app.skills.service_area import check_service_address
 
 logger = logging.getLogger(__name__)
 
 _skill = BatteryChangeSkill()
 _mechanical = MechanicalServiceSkill()
+
+TIPO_REVISION_BATERIA = "revision_bateria"
 
 
 def _slot_updates(args: dict[str, Any]) -> dict[str, Any]:
@@ -47,6 +51,15 @@ def _log_quote_call(name: str, slots: dict[str, Any]) -> None:
 
 def _log_quote_response(name: str, quote: dict[str, Any]) -> None:
     logger.info("Cotizador %s\nrespuesta: %s", name, _dump(_quote_for_log(quote)))
+
+
+def _revision_fee(applies: bool) -> int | float | None:
+    if not applies:
+        return None
+    fee = float(settings.battery_revision_fee_ars or 0)
+    if fee <= 0:
+        return None
+    return int(fee) if fee == int(fee) else fee
 
 
 async def execute_tool(
@@ -102,15 +115,53 @@ async def execute_tool(
     if name == "coordinar_turno":
         lugar = str(args.get("lugar_colocacion") or "")
         last_quote = store.last_quote(conv_id)
-        if last_quote and last_quote.skill == _mechanical.name:
+        revision_bateria = args.get("tipo_turno") == TIPO_REVISION_BATERIA
+        # La revisión de batería puede ser a domicilio aunque antes haya habido una
+        # estimación mecánica; solo el trabajo mecánico queda siempre en el taller.
+        is_mechanical = not revision_bateria and bool(
+            last_quote and last_quote.skill == _mechanical.name
+        )
+        if is_mechanical:
             lugar = "taller"
+        direccion = str(args.get("direccion") or "").strip()
+        departamento = ""
+        if not is_mechanical and lugar == "domicilio":
+            # Solo a domicilio: la dirección tiene que estar dentro del Gran San Juan.
+            # En taller no importa el domicilio del cliente.
+            check = check_service_address(direccion, args.get("departamento"))
+            if check["status"] != "ok":
+                logger.info("coordinar_turno sin handoff: %s", _dump(check))
+                return check
+            departamento = check["departamento"]
+            store.set_service_address(conv_id, direccion, departamento)
         store.set_lugar_colocacion(conv_id, lugar)
         store.set_state(conv_id, ConversationState.HANDED_OFF)
-        await channel.handoff_to_human(
-            conversation.channel_ref,
-            f"turno:{lugar} {args.get('nota') or ''}".strip(),
-        )
-        return {"status": "handed_off", "motivo": "coordinar_turno", "lugar_colocacion": lugar}
+        note_parts = [f"turno:{lugar}"]
+        if revision_bateria:
+            note_parts.append("revisión de batería")
+        if direccion and departamento:
+            note_parts.append(f"dirección: {direccion} ({departamento})")
+        cargo = _revision_fee(revision_bateria and lugar == "domicilio")
+        if cargo is not None:
+            note_parts.append(
+                f"cargo revisión técnica: {cargo} (se descuenta si cambia la batería)"
+            )
+        if args.get("nota"):
+            note_parts.append(str(args["nota"]))
+        await channel.handoff_to_human(conversation.channel_ref, " ".join(note_parts))
+        result: dict[str, Any] = {
+            "status": "handed_off",
+            "motivo": "coordinar_turno",
+            "lugar_colocacion": lugar,
+        }
+        if cargo is not None:
+            result["cargo_revision_ars"] = cargo
+            result["aviso"] = (
+                f"Si todavía no se lo dijiste, informale con 'Importante:' que la revisión técnica "
+                f"a domicilio tiene un cargo de {cargo} pesos: si el problema no es la batería se abona; "
+                "si cambia la batería, se descuenta del pago final."
+            )
+        return result
 
     if name == "derivar_a_humano":
         motivo = str(args.get("motivo") or "cliente")

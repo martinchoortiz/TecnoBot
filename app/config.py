@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./tecnobot.db"
     echo_mode: bool = True
     labor_hourly_rate_ars: float = 0
+    # Margen en % sobre el precio de catálogo de la batería. Precio final = catálogo * (1 + margen/100).
+    battery_margin_pct: float = 30
+    # Cargo de revisión técnica a domicilio de batería. Si no es la batería, se abona;
+    # si se cambia, se descuenta del pago final. 0 = sin configurar.
+    battery_revision_fee_ars: float = 0
     # Horas que se reutiliza una estimación mecánica para el mismo vehículo y trabajo. 0 = sin caché.
     estimate_cache_ttl_hours: float = 24
 
