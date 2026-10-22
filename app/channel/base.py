@@ -23,5 +23,11 @@ class ChannelPort(ABC):
         """Envía texto al hilo. `to` es el teléfono si el canal lo necesita."""
 
     @abstractmethod
-    async def handoff_to_human(self, conversation_ref: str, reason: str) -> None:
-        """Pasa el hilo a un empleado. Hoy: Kapso inbox; el bot deja de auto-responder."""
+    async def handoff_to_human(
+        self,
+        conversation_ref: str,
+        reason: str,
+        *,
+        phone: str | None = None,
+    ) -> None:
+        """Pasa el hilo a un empleado. El bot deja de auto-responder."""

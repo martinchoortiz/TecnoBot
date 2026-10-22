@@ -17,6 +17,7 @@ def test_http_error_becomes_external_service_error() -> None:
         raise_for_external_response("kapso", response, "send_text")
     assert caught.value.status_code == 403
     assert caught.value.provider == "kapso"
+    assert "blocked" in str(caught.value)
 
 
 def test_200_with_error_object_is_failure() -> None:

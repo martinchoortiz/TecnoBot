@@ -12,5 +12,11 @@ class FakeChannel(ChannelPort):
     async def send_text(self, conversation_ref: str, text: str, to: str | None = None) -> None:
         self.sent.append((conversation_ref, text, to))
 
-    async def handoff_to_human(self, conversation_ref: str, reason: str) -> None:
+    async def handoff_to_human(
+        self,
+        conversation_ref: str,
+        reason: str,
+        *,
+        phone: str | None = None,
+    ) -> None:
         self.handoffs.append((conversation_ref, reason))

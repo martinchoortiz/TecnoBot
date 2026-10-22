@@ -113,6 +113,27 @@ class ConversationStore:
             .order_by(Quote.created_at.desc())
         ).first()
 
+    def find_for_resume(self, conversation_ref: str | None, phone: str | None) -> Conversation | None:
+        ref = (conversation_ref or "").strip()
+        if ref:
+            conv = self.session.exec(
+                select(Conversation).where(Conversation.channel_ref == ref)
+            ).first()
+            if conv:
+                return conv
+        digits = "".join(ch for ch in (phone or "") if ch.isdigit())
+        if not digits:
+            return None
+        for value in {phone, digits, f"+{digits}"}:
+            if not value:
+                continue
+            conv = self.session.exec(
+                select(Conversation).where(Conversation.phone == value)
+            ).first()
+            if conv:
+                return conv
+        return None
+
     def set_state(self, conversation_id: str, state: ConversationState) -> None:
         conv = self.session.get(Conversation, conversation_id)
         if not conv:

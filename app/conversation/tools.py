@@ -148,7 +148,11 @@ async def execute_tool(
             )
         if args.get("nota"):
             note_parts.append(str(args["nota"]))
-        await channel.handoff_to_human(conversation.channel_ref, " ".join(note_parts))
+        await channel.handoff_to_human(
+            conversation.channel_ref,
+            " ".join(note_parts),
+            phone=conversation.phone,
+        )
         result: dict[str, Any] = {
             "status": "handed_off",
             "motivo": "coordinar_turno",
@@ -166,7 +170,11 @@ async def execute_tool(
     if name == "derivar_a_humano":
         motivo = str(args.get("motivo") or "cliente")
         store.set_state(conv_id, ConversationState.HANDED_OFF)
-        await channel.handoff_to_human(conversation.channel_ref, motivo)
+        await channel.handoff_to_human(
+            conversation.channel_ref,
+            motivo,
+            phone=conversation.phone,
+        )
         return {"status": "handed_off", "motivo": motivo}
 
     logger.warning("Tool desconocida: %s", name)

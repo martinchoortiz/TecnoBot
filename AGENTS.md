@@ -35,3 +35,5 @@ FastAPI, SQLModel, SQLite (local) / Postgres (prod), Kapso REST, DeepSeek vía S
 Una fase verificable por vez. No hardcodear API keys. Tests de parseo/firma/skills/orchestrator sin red.
 
 Estados de conversación: `active`, `handed_off`, `quoted`. Con `handed_off` el bot no llama `send_text`.
+
+Handoff (`coordinar_turno` o `derivar_a_humano`): queda `handed_off`. Con `KAPSO_API_KEY` la nota se escribe en el metadata del contacto (`tecnobot_nota`, pestaña Info del inbox). Con `KAPSO_PUBLIC_BASE_URL` (o `KAPSO_HANDOFF_WORKFLOW_ID`) se arranca el workflow `tecnobot-handoff`, que pone el banner amarillo. Resume from Handoff llama a `POST /webhooks/kapso/resume` (`X-Resume-Secret` = `KAPSO_WEBHOOK_SECRET`) y el estado vuelve a `active`. `KAPSO_HANDOFF_USER_ID` asigna el hilo con la misma nota. Si Kapso falla, el estado `handed_off` se mantiene y el corte queda en `internal_error`.

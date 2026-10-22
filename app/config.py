@@ -8,6 +8,13 @@ class Settings(BaseSettings):
     kapso_phone_number_id: str = ""
     kapso_webhook_secret: str = ""
     kapso_base_url: str = "https://api.kapso.ai"
+    # URL pública de este backend (ngrok o el dominio de prod), sin barra final.
+    # Con ella se crea el workflow que muestra el banner y llama a /webhooks/kapso/resume.
+    kapso_public_base_url: str = ""
+    # Si está vacío y hay kapso_public_base_url, se usa el workflow slug tecnobot-handoff.
+    kapso_handoff_workflow_id: str = ""
+    # Usuario del proyecto Kapso. Si está vacío, no se asigna el hilo.
+    kapso_handoff_user_id: str = ""
 
     llm_api_key: str = ""
     llm_base_url: str = "https://api.deepseek.com"

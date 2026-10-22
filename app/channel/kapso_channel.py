@@ -5,12 +5,36 @@ import hmac
 import logging
 from typing import Any
 
+from sqlmodel import Session
+
 from app.channel.base import ChannelPort, IncomingMessage
 from app.channel.errors import ExternalServiceError
 from app.channel.http import external_post
+from app.channel.kapso_handoff import (
+    assign_conversation,
+    publish_contact_note,
+    start_handoff_execution,
+)
 from app.config import settings
+from app.db.error_log import record_internal_error
+from app.db.session import get_engine
 
 logger = logging.getLogger(__name__)
+
+
+def _record_handoff_failure(exc: Exception, conversation_ref: str, action: str) -> None:
+    logger.exception("Handoff Kapso falló en %s conv=%s", action, conversation_ref)
+    try:
+        with Session(get_engine()) as session:
+            record_internal_error(
+                session,
+                source="channel",
+                exc=exc,
+                channel_ref=conversation_ref,
+                extra={"action": action},
+            )
+    except Exception:
+        logger.exception("No se pudo persistir el fallo de handoff")
 
 
 GRAPH_VERSION = "v24.0"
@@ -100,7 +124,23 @@ class KapsoChannel(ChannelPort):
         }
         await external_post("kapso", "send_text", url, json=payload, headers=headers)
 
-    async def handoff_to_human(self, conversation_ref: str, reason: str) -> None:
+    async def handoff_to_human(
+        self,
+        conversation_ref: str,
+        reason: str,
+        *,
+        phone: str | None = None,
+    ) -> None:
         logger.info("Handoff conv=%s reason=%s", conversation_ref, reason)
-        # El cerebro deja de responder (estado en DB). El empleado atiende en inbox.kapso.ai.
-        # Si más adelante usamos workflows de Kapso, acá iría el PATCH a status=handoff.
+        if not settings.kapso_api_key:
+            return
+        steps = (
+            ("nota", publish_contact_note(phone, reason)),
+            ("asignacion", assign_conversation(conversation_ref, reason)),
+            ("workflow", start_handoff_execution(phone, conversation_ref, reason)),
+        )
+        for action, step in steps:
+            try:
+                await step
+            except Exception as exc:
+                _record_handoff_failure(exc, conversation_ref, action)
