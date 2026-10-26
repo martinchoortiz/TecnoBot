@@ -21,6 +21,7 @@ from app.skills.mechanical_estimator import (
     estimate_repair,
     load_estimator_prompt,
     parse_estimate_payload,
+    sources_have_part_price,
 )
 from app.skills.mechanical_service import MechanicalServiceSkill
 from tests.fakes import FakeChannel
@@ -327,49 +328,36 @@ def test_estimator_is_a_fresh_session(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result["fuentes"] == HITS
 
 
-def test_empty_search_does_not_call_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_empty_search_offers_revision_and_does_not_call_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "labor_hourly_rate_ars", 20000)
-    client = _Client("{}")
+    client = _Client(json.dumps(PAYLOAD))
     result = estimate_repair(SLOTS, client=client, search=lambda _query: [])
-    assert result == {"status": "error", "error": "busqueda_vacia"}
+    assert result["status"] == "requiere_revision"
+    assert "price" not in result
+    assert "precio de repuesto" in result["motivo"]
     assert client.responses.kwargs is None
 
 
-def test_empty_search_asks_for_the_next_details(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "labor_hourly_rate_ars", 95000)
-    client = _Client("{}")
-    result = estimate_repair(
-        {
-            "marca": "Chevrolet",
-            "modelo": "Onix",
-            "anio": "2017",
-            "descripcion_problema": "Service completo (mantenimiento programado)",
-            "valor_hora_mano_de_obra": 95000,
-        },
-        client=client,
-        search=lambda _query: [],
-    )
-    assert result["status"] == "need_slots"
-    assert result["missing"] == ["motor", "descripcion_problema"]
-    assert "motor" in result["motivo"]
-    assert client.responses.kwargs is None
-
-
-def test_empty_search_for_a_specific_job_asks_vehicle_slots(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_search_without_a_part_price_offers_revision(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "labor_hourly_rate_ars", 20000)
-    result = estimate_repair(
-        {
-            "marca": "Volkswagen",
-            "modelo": "Gol",
-            "anio": "2014",
-            "descripcion_problema": "frena largo, hay que cambiar las pastillas",
-            "valor_hora_mano_de_obra": 20000,
-        },
-        client=_Client("{}"),
-        search=lambda _query: [],
-    )
-    assert result["status"] == "need_slots"
-    assert result["missing"] == ["motor", "trim"]
+    client = _Client(json.dumps(PAYLOAD))
+    hits = [{"title": "Gol 2014 1.6", "url": "https://ejemplo.test/gol", "snippet": "manual, motor 1.6"}]
+    result = estimate_repair(SLOTS, client=client, search=lambda _query: hits)
+    assert result["status"] == "requiere_revision"
+    assert "price" not in result
+    assert client.responses.kwargs is None
+    again = estimate_repair(SLOTS, client=_Client(json.dumps(PAYLOAD)), search=_search)
+    assert again["status"] == "ok"
+    assert again["price"] == 75000
+
+
+def test_part_price_needs_a_published_amount() -> None:
+    assert sources_have_part_price(HITS)
+    assert sources_have_part_price([{"title": "", "snippet": "pastillas $45.000"}])
+    assert sources_have_part_price([{"title": "", "snippet": "alrededor de 45000 pesos"}])
+    assert sources_have_part_price([{"title": "", "snippet": "ARS 12500"}])
+    assert not sources_have_part_price([])
+    assert not sources_have_part_price([{"title": "Gol 2014", "snippet": "motor 1.6, 2 horas"}])
 
 
 def test_no_results_exception_does_not_abort_the_other_query(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -448,7 +436,11 @@ def test_prompts_split_concrete_jobs_from_symptoms() -> None:
     assert "requiere_revision" in text
     assert "Síntoma sin causa conocida" in text
     assert "Revisión pedida" in text
-    assert "requiere_revision" in load_estimator_prompt()
+    estimator = load_estimator_prompt()
+    assert "requiere_revision" in estimator
+    assert "estimalo con tu conocimiento del mercado" not in estimator
+    assert "No completes precios con tu conocimiento del mercado" in estimator
+    assert "monto en pesos" in estimator
 
 
 def test_estimator_does_not_reask_data_already_present(monkeypatch: pytest.MonkeyPatch) -> None:

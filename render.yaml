@@ -1,0 +1,45 @@
+# Lo lee Render al crear el Blueprint. El arranque local no usa este archivo.
+services:
+  - type: web
+    name: tecnobot
+    runtime: python
+    branch: main
+    numInstances: 1
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.14.4"
+      - key: ECHO_MODE
+        value: "false"
+      - key: KAPSO_BASE_URL
+        value: https://api.kapso.ai
+      - key: LLM_BASE_URL
+        value: https://api.deepseek.com
+      - key: LLM_MODEL
+        value: deepseek-v4-flash
+      - key: BATTERY_MARGIN_PCT
+        value: "30"
+      - key: ESTIMATE_CACHE_TTL_HOURS
+        value: "24"
+      - key: DATABASE_URL
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+      - key: KAPSO_API_KEY
+        sync: false
+      - key: KAPSO_PHONE_NUMBER_ID
+        sync: false
+      - key: KAPSO_WEBHOOK_SECRET
+        sync: false
+      - key: KAPSO_PUBLIC_BASE_URL
+        sync: false
+      - key: KAPSO_HANDOFF_WORKFLOW_ID
+        sync: false
+      - key: KAPSO_HANDOFF_USER_ID
+        sync: false
+      - key: LABOR_HOURLY_RATE_ARS
+        sync: false
+      - key: BATTERY_REVISION_FEE_ARS
+        sync: false

@@ -8,8 +8,17 @@ from app.config import settings
 _engine: Engine | None = None
 
 
+def normalize_database_url(url: str) -> str:
+    """Supabase entrega postgres:// o postgresql://. psycopg 3 usa postgresql+psycopg://."""
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + url.removeprefix("postgresql://")
+    if url.startswith("postgres://"):
+        return "postgresql+psycopg://" + url.removeprefix("postgres://")
+    return url
+
+
 def make_engine(database_url: str | None = None) -> Engine:
-    url = database_url or settings.database_url
+    url = normalize_database_url(database_url or settings.database_url)
     connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
     return create_engine(url, connect_args=connect_args)
 

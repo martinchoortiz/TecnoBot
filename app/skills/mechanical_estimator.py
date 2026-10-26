@@ -56,7 +56,19 @@ _DETAIL_LABELS = {
     "transmision": "la transmisión",
     "descripcion_problema": "un detalle más concreto del trabajo (kilometraje o qué incluye)",
 }
-_BROAD_JOB = re.compile(r"\b(service|servicio|mantenimiento)\b", re.IGNORECASE)
+# Un monto publicado: $45.000, $45000, 45.000 pesos, ARS 45000. Un año (2014) o una cilindrada (1.6) no alcanzan.
+_PART_PRICE = re.compile(
+    r"(?:\$\s*\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?)"
+    r"|(?:\$\s*\d{4,})"
+    r"|(?:\b\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?\s*(?:pesos|ars)\b)"
+    r"|(?:\b(?:ars|pesos)\s*\$?\s*\d[\d.]*)"
+    r"|(?:\b\d{4,}\s*(?:pesos|ars)\b)",
+    re.IGNORECASE,
+)
+SIN_PRECIO_REPUESTO = (
+    "No encontré un precio de repuesto publicado para este vehículo y este trabajo. "
+    "Hay que verlo en el taller para cotizarlo."
+)
 
 
 def load_estimator_prompt() -> str:
@@ -262,9 +274,9 @@ def estimate_repair(
             return quote
 
     hits = gather_sources(slots, search or search_web)
-    if not hits:
-        logger.info("Búsqueda mecánica sin resultados")
-        return _empty_search_result(slots)
+    if not sources_have_part_price(hits):
+        logger.info("Búsqueda mecánica sin precio de repuesto")
+        return _revision(SIN_PRECIO_REPUESTO)
 
     llm = client or build_client()
     kwargs: dict[str, Any] = {
@@ -287,10 +299,7 @@ def estimate_repair(
         return {"status": "error", "error": "estimacion_invalida"}
     if payload.get("requiere_revision") is True:
         motivo = " ".join(str(payload.get("motivo") or "").split())
-        return {
-            "status": "requiere_revision",
-            "motivo": motivo[:240] or "El problema necesita revisión del auto antes de estimar.",
-        }
+        return _revision(motivo or "El problema necesita revisión del auto antes de estimar.")
     if payload.get("necesita_detalle") is True:
         return _detail_request(slots, payload.get("faltan"), payload.get("motivo"))
     quote = assemble_quote(slots, payload)
@@ -346,23 +355,21 @@ def _is_no_results(exc: BaseException) -> bool:
     return exc.__class__.__name__ == "DDGSException" and "No results found" in str(exc)
 
 
-def _problem_is_broad(slots: dict[str, Any]) -> bool:
-    text = str(slots.get("descripcion_problema") or "").strip()
-    if not _BROAD_JOB.search(text):
-        return False
-    return re.search(r"\d{2,}", text) is None
+def sources_have_part_price(hits: list[dict[str, str]]) -> bool:
+    """Hay un monto en pesos en algún resultado. Sin eso no se publica una cifra."""
+    for hit in hits:
+        text = " ".join(str(hit.get(key) or "") for key in ("title", "snippet", "body"))
+        if _PART_PRICE.search(text):
+            return True
+    return False
 
 
-def _empty_search_result(slots: dict[str, Any]) -> dict[str, Any]:
-    vehicle = [key for key in _REFINE_SLOTS if not str(slots.get(key) or "").strip()]
-    if _problem_is_broad(slots):
-        missing = vehicle[:1]
-        missing.append("descripcion_problema")
-    else:
-        missing = vehicle[:2]
-    if not missing:
-        return {"status": "error", "error": "busqueda_vacia"}
-    return _need_slots(missing, _detail_motivo(missing))
+def _revision(motivo: str) -> dict[str, Any]:
+    text = " ".join(str(motivo or "").split())
+    return {
+        "status": "requiere_revision",
+        "motivo": text[:240] or "El problema necesita revisión del auto antes de estimar.",
+    }
 
 
 def _detail_request(slots: dict[str, Any], faltan: Any, motivo: Any) -> dict[str, Any]:
