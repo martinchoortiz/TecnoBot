@@ -3,6 +3,7 @@ services:
   - type: web
     name: tecnobot
     runtime: python
+    plan: free
     branch: main
     numInstances: 1
     buildCommand: pip install -r requirements.txt
