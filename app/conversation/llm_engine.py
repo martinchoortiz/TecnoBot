@@ -21,7 +21,12 @@ TOOLS: list[dict[str, Any]] = [
                 "Busca precio de cambio de batería. Pasá los datos del auto que ya tengas "
                 "(también los que el cliente dio antes en la conversación); "
                 "el catálogo indica si faltan campos. Si hay varias baterías que le sirven al auto, "
-                "devuelve `opciones` con el total de cada una."
+                "devuelve `opciones` con el total de cada una. "
+                "Llamala si piden el precio, y también cuando ya eligieron cambiar o revisar "
+                "la batería, antes de cerrar, si todavía no cotizaste ese auto. "
+                "Si en ese cierre no hay precio (`none`, `need_slots` o `error`), no preguntes más "
+                "ni coordines turno: avisá que no encontró un modelo de batería para el vehículo "
+                "indicado y usá derivar_a_humano."
             ),
             "parameters": {
                 "type": "object",
@@ -110,9 +115,13 @@ TOOLS: list[dict[str, Any]] = [
                 "fuera_de_zona, avisá que no se hacen visitas técnicas en esa localidad (no hay handoff) "
                 "y ofrecé solamente la atención en el taller. "
                 "En taller no se pide dirección ni se valida zona. "
+                "Un turno de batería (cambio o revisión) solo se coordina con los tres confirmados: "
+                "batería con marca y modelo (un precio, no opciones sin elegir), precio aceptado "
+                "(`precio_aceptado`=true) y domicilio validado. Si falta alguno, o si eligió taller, "
+                "no la llames: usá derivar_a_humano. Si `cotizar_bateria` no trajo precio, tampoco. "
+                "Si devuelve no_listo, no hay handoff: seguí el motivo. "
                 "Si el auto no arranca o se sospecha de la batería y el cliente quiere que la revisen, "
-                "usá tipo_turno=revision_bateria: la revisión puede ser a domicilio (con las mismas "
-                "reglas de zona) o en el taller. "
+                "y ya están los tres confirmados, usá tipo_turno=revision_bateria a domicilio. "
                 "Al ofrecer la revisión a domicilio, informá siempre el cargo de revisión técnica "
                 "del final de las instrucciones: si el problema no es la batería se abona; "
                 "si se cambia la batería, se descuenta del pago final. En el taller no hay ese cargo. "
@@ -143,6 +152,13 @@ TOOLS: list[dict[str, Any]] = [
                         "description": (
                             "`revision_bateria` cuando el turno es para revisar la batería "
                             "(no arranca / se sospecha de la batería). Si no, omitilo."
+                        ),
+                    },
+                    "precio_aceptado": {
+                        "type": "boolean",
+                        "description": (
+                            "True solo si el cliente aceptó el precio de una batería ya identificada "
+                            "(marca y modelo). Obligatorio para un turno de batería."
                         ),
                     },
                     "nota": {"type": "string"},

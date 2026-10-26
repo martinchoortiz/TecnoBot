@@ -457,6 +457,20 @@ def test_unreadable_estimate(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result == {"status": "error", "error": "estimacion_invalida"}
 
 
+def test_prompt_quotes_battery_before_handoff() -> None:
+    text = load_system_prompt()
+    assert "Cuándo llamar `cotizar_bateria` (dos momentos)" in text
+    assert "Precio aceptado por el cliente" in text
+    assert "usá `derivar_a_humano`" in text
+    assert "No encontré un modelo de batería para el vehículo indicado." in text
+    quote = next(item["function"] for item in TOOLS if item["function"]["name"] == "cotizar_bateria")
+    assert "ni coordines turno" in quote["description"]
+    assert "derivar_a_humano" in quote["description"]
+    handoff = next(item["function"] for item in TOOLS if item["function"]["name"] == "coordinar_turno")
+    assert "precio aceptado" in handoff["description"]
+    assert "no la llames" in handoff["description"]
+
+
 def test_prompt_states_home_battery_revision_fee(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "battery_revision_fee_ars", 15000)
     text = load_system_prompt()

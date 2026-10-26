@@ -53,6 +53,39 @@ def _log_quote_response(name: str, quote: dict[str, Any]) -> None:
     logger.info("Cotizador %s\nrespuesta: %s", name, _dump(_quote_for_log(quote)))
 
 
+def _battery_turn_block(
+    last_quote: Any,
+    lugar: str,
+    args: dict[str, Any],
+) -> dict[str, Any] | None:
+    """El turno de batería solo se coordina con marca y modelo, precio aceptado y domicilio."""
+    missing: list[str] = []
+    confirmed = bool(
+        last_quote is not None
+        and last_quote.skill == _skill.name
+        and last_quote.price is not None
+        and last_quote.detail
+    )
+    if not confirmed:
+        missing.append("bateria")
+    if args.get("precio_aceptado") is not True:
+        missing.append("precio_aceptado")
+    if lugar != "domicilio":
+        missing.append("domicilio")
+    if not missing:
+        return None
+    return {
+        "status": "no_listo",
+        "missing": missing,
+        "motivo": (
+            "Para coordinar el turno tienen que estar confirmados la batería "
+            "(marca y modelo), el precio aceptado por el cliente y el domicilio. "
+            "Si no hay batería, faltan datos o hubo un error, no preguntes más "
+            "y usá derivar_a_humano. No coordines el turno."
+        ),
+    }
+
+
 def _revision_fee(applies: bool) -> int | float | None:
     if not applies:
         return None
@@ -123,6 +156,17 @@ async def execute_tool(
         )
         if is_mechanical:
             lugar = "taller"
+        battery_turn = (not is_mechanical) and (
+            revision_bateria
+            or lugar == "domicilio"
+            or bool(last_quote and last_quote.skill == _skill.name)
+        )
+        if battery_turn:
+            blocked = _battery_turn_block(last_quote, lugar, args)
+            if blocked is not None:
+                logger.info("coordinar_turno sin handoff: %s", _dump(blocked))
+                return blocked
+            lugar = "domicilio"
         direccion = str(args.get("direccion") or "").strip()
         departamento = ""
         if not is_mechanical and lugar == "domicilio":
@@ -139,6 +183,9 @@ async def execute_tool(
         note_parts = [f"turno:{lugar}"]
         if revision_bateria:
             note_parts.append("revisión de batería")
+        if battery_turn and last_quote is not None and last_quote.detail and last_quote.price is not None:
+            price = int(last_quote.price) if float(last_quote.price) == int(last_quote.price) else last_quote.price
+            note_parts.append(f"batería: {last_quote.detail} ${price}")
         if direccion and departamento:
             note_parts.append(f"dirección: {direccion} ({departamento})")
         cargo = _revision_fee(revision_bateria and lugar == "domicilio")

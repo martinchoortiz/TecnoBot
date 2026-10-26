@@ -17,6 +17,16 @@ def session() -> Session:
         yield s
 
 
+def _confirmar_bateria(store: ConversationStore, conversation_id: str) -> None:
+    store.save_quote(
+        conversation_id,
+        "cambio_bateria",
+        {"marca": "Chevrolet", "modelo": "Onix", "anio": "2017"},
+        180000.0,
+        "Heliar HF40",
+    )
+
+
 @pytest.mark.asyncio
 async def test_cotizar_persists_quote(session: Session, catalog_fixture) -> None:
     store = ConversationStore(session)
@@ -42,6 +52,7 @@ async def test_coordinar_turno_handoff(session: Session) -> None:
     conv = store.get_or_create(
         IncomingMessage(conversation_ref="c2", text="x", message_id="m2", from_phone="1")
     )
+    _confirmar_bateria(store, conv.id)
     channel = FakeChannel()
     result = await execute_tool(
         "coordinar_turno",
@@ -49,6 +60,7 @@ async def test_coordinar_turno_handoff(session: Session) -> None:
             "lugar_colocacion": "domicilio",
             "direccion": "Av. Libertador 1234",
             "departamento": "Rivadavia",
+            "precio_aceptado": True,
         },
         store=store,
         conversation=conv,
@@ -57,6 +69,7 @@ async def test_coordinar_turno_handoff(session: Session) -> None:
     assert result["status"] == "handed_off"
     assert channel.handoffs[0][0] == "c2"
     assert "Libertador 1234" in channel.handoffs[0][1]
+    assert "Heliar HF40" in channel.handoffs[0][1]
     session.refresh(conv)
     assert conv.state == ConversationState.HANDED_OFF.value
     assert conv.vehicle_slots["lugar_colocacion"] == "domicilio"
@@ -69,10 +82,11 @@ async def test_coordinar_turno_domicilio_pide_direccion(session: Session) -> Non
     conv = store.get_or_create(
         IncomingMessage(conversation_ref="c4", text="x", message_id="m4", from_phone="1")
     )
+    _confirmar_bateria(store, conv.id)
     channel = FakeChannel()
     result = await execute_tool(
         "coordinar_turno",
-        {"lugar_colocacion": "domicilio"},
+        {"lugar_colocacion": "domicilio", "precio_aceptado": True},
         store=store,
         conversation=conv,
         channel=channel,
@@ -85,15 +99,47 @@ async def test_coordinar_turno_domicilio_pide_direccion(session: Session) -> Non
 
 
 @pytest.mark.asyncio
+async def test_coordinar_turno_bateria_sin_confirmar_no_hace_handoff(session: Session) -> None:
+    store = ConversationStore(session)
+    conv = store.get_or_create(
+        IncomingMessage(conversation_ref="c12", text="x", message_id="m12", from_phone="1")
+    )
+    channel = FakeChannel()
+    result = await execute_tool(
+        "coordinar_turno",
+        {
+            "lugar_colocacion": "domicilio",
+            "direccion": "Av. Libertador 1234",
+            "departamento": "Rivadavia",
+        },
+        store=store,
+        conversation=conv,
+        channel=channel,
+    )
+    assert result["status"] == "no_listo"
+    assert "bateria" in result["missing"]
+    assert "precio_aceptado" in result["missing"]
+    assert channel.handoffs == []
+    session.refresh(conv)
+    assert conv.state != ConversationState.HANDED_OFF.value
+
+
+@pytest.mark.asyncio
 async def test_coordinar_turno_domicilio_fuera_de_zona(session: Session) -> None:
     store = ConversationStore(session)
     conv = store.get_or_create(
         IncomingMessage(conversation_ref="c5", text="x", message_id="m5", from_phone="1")
     )
+    _confirmar_bateria(store, conv.id)
     channel = FakeChannel()
     result = await execute_tool(
         "coordinar_turno",
-        {"lugar_colocacion": "domicilio", "direccion": "Ruta 40 km 12", "departamento": "Pocito"},
+        {
+            "lugar_colocacion": "domicilio",
+            "direccion": "Ruta 40 km 12",
+            "departamento": "Pocito",
+            "precio_aceptado": True,
+        },
         store=store,
         conversation=conv,
         channel=channel,
@@ -176,6 +222,7 @@ async def test_revision_bateria_domicilio_aun_con_cotizacion_mecanica(session: S
         IncomingMessage(conversation_ref="c8", text="x", message_id="m8", from_phone="1")
     )
     store.save_quote(conv.id, "atencion_mecanica", {"marca": "Ford"}, 100000.0, "estimación")
+    _confirmar_bateria(store, conv.id)
     channel = FakeChannel()
     result = await execute_tool(
         "coordinar_turno",
@@ -184,6 +231,7 @@ async def test_revision_bateria_domicilio_aun_con_cotizacion_mecanica(session: S
             "lugar_colocacion": "domicilio",
             "direccion": "Av. Libertador 1234",
             "departamento": "Rawson",
+            "precio_aceptado": True,
             "nota": "Ford Focus 2015, no arranca",
         },
         store=store,
@@ -205,6 +253,7 @@ async def test_revision_bateria_domicilio_fuera_de_zona(session: Session) -> Non
     conv = store.get_or_create(
         IncomingMessage(conversation_ref="c9", text="x", message_id="m9", from_phone="1")
     )
+    _confirmar_bateria(store, conv.id)
     channel = FakeChannel()
     result = await execute_tool(
         "coordinar_turno",
@@ -213,6 +262,7 @@ async def test_revision_bateria_domicilio_fuera_de_zona(session: Session) -> Non
             "lugar_colocacion": "domicilio",
             "direccion": "Ruta 40 km 12",
             "departamento": "Pocito",
+            "precio_aceptado": True,
         },
         store=store,
         conversation=conv,
@@ -237,10 +287,12 @@ async def test_revision_bateria_taller_sin_direccion(session: Session) -> None:
         conversation=conv,
         channel=channel,
     )
-    assert result["status"] == "handed_off"
-    assert result["lugar_colocacion"] == "taller"
-    assert "cargo_revision_ars" not in result
-    assert channel.handoffs[0][1] == "turno:taller revisión de batería"
+    assert result["status"] == "no_listo"
+    assert "domicilio" in result["missing"]
+    assert "bateria" in result["missing"]
+    assert channel.handoffs == []
+    session.refresh(conv)
+    assert conv.state != ConversationState.HANDED_OFF.value
 
 
 @pytest.mark.asyncio
@@ -252,6 +304,7 @@ async def test_revision_bateria_domicilio_informa_cargo(
     conv = store.get_or_create(
         IncomingMessage(conversation_ref="c11", text="x", message_id="m11", from_phone="1")
     )
+    _confirmar_bateria(store, conv.id)
     channel = FakeChannel()
     result = await execute_tool(
         "coordinar_turno",
@@ -260,6 +313,7 @@ async def test_revision_bateria_domicilio_informa_cargo(
             "lugar_colocacion": "domicilio",
             "direccion": "Av. Libertador 1234",
             "departamento": "Rawson",
+            "precio_aceptado": True,
         },
         store=store,
         conversation=conv,
