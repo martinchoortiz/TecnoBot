@@ -20,6 +20,8 @@ services:
         value: https://api.deepseek.com
       - key: LLM_MODEL
         value: deepseek-v4-flash
+      - key: LLM_ESTIMATOR_MODEL
+        value: deepseek-v4-pro
       - key: BATTERY_MARGIN_PCT
         value: "30"
       - key: ESTIMATE_CACHE_TTL_HOURS

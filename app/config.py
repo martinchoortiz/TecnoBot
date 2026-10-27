@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_base_url: str = "https://api.deepseek.com"
     llm_model: str = "deepseek-v4-flash"
+    # El cotizador busca en la web. DeepSeek solo ejecuta web_search en deepseek-v4-pro.
+    llm_estimator_model: str = "deepseek-v4-pro"
     llm_disable_thinking: bool = True
 
     database_url: str = "sqlite:///./tecnobot.db"

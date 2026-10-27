@@ -21,14 +21,13 @@ logger = logging.getLogger(__name__)
 
 PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "mechanical_estimator.md"
 SEARCH_TIMEOUT_SECONDS = 120.0
-MAX_SOURCES = 8
 # 0 = lo más determinista que ofrece el modelo; la variación entre consultas no se resuelve con creatividad.
 ESTIMATOR_TEMPERATURE = 0.0
 _CACHE: dict[str, dict[str, Any]] = {}
 _CACHE_LOCK = threading.Lock()
 ESTIMATE_DISCLAIMER = "Es una estimación y está sujeta a verificación final."
 PLUS_TAX = "más impuestos"
-SearchFn = Callable[[str], list[dict[str, str]]]
+WEB_SEARCH_TOOL = {"type": "web_search"}
 
 SLOT_KEYS = (
     "descripcion_problema",
@@ -57,19 +56,6 @@ _DETAIL_LABELS = {
     "transmision": "la transmisión",
     "descripcion_problema": "un detalle más concreto del trabajo (kilometraje o qué incluye)",
 }
-# Un monto publicado: $45.000, $45000, 45.000 pesos, ARS 45000. Un año (2014) o una cilindrada (1.6) no alcanzan.
-_PART_PRICE = re.compile(
-    r"(?:\$\s*\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?)"
-    r"|(?:\$\s*\d{4,})"
-    r"|(?:\b\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?\s*(?:pesos|ars)\b)"
-    r"|(?:\b(?:ars|pesos)\s*\$?\s*\d[\d.]*)"
-    r"|(?:\b\d{4,}\s*(?:pesos|ars)\b)",
-    re.IGNORECASE,
-)
-SIN_PRECIO_REPUESTO = (
-    "No encontré un precio de repuesto publicado para este vehículo y este trabajo. "
-    "Hay que verlo en el taller para cotizarlo."
-)
 
 
 def load_estimator_prompt() -> str:
@@ -84,65 +70,10 @@ def resolve_hourly_rate(slots: dict[str, Any]) -> float | None:
     return _positive_number(slots.get("valor_hora_mano_de_obra"))
 
 
-def build_search_queries(slots: dict[str, Any]) -> list[str]:
-    bits = [
-        str(slots.get(key) or "").strip()
-        for key in ("marca", "modelo", "anio", "generacion", "trim", "motor", "transmision")
-    ]
-    vehicle = " ".join(bit for bit in bits if bit)
-    problem = str(slots.get("descripcion_problema") or "").strip()
-    return [
-        f"{vehicle} {problem} precio repuesto Argentina".strip(),
-        f"{vehicle} {problem} horas mano de obra taller".strip(),
-    ]
-
-
-def search_web(query: str) -> list[dict[str, str]]:
-    from ddgs import DDGS
-
-    rows = DDGS().text(query, region="ar-es", max_results=5) or []
-    hits: list[dict[str, str]] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        hits.append(
-            {
-                "title": str(row.get("title") or "").strip(),
-                "url": str(row.get("href") or "").strip(),
-                "snippet": str(row.get("body") or "").strip(),
-            }
-        )
-    return hits
-
-
-def gather_sources(slots: dict[str, Any], search: SearchFn) -> list[dict[str, str]]:
-    found: list[dict[str, str]] = []
-    seen: set[str] = set()
-    for query in build_search_queries(slots):
-        try:
-            rows = search(query) or []
-        except Exception as exc:
-            if not _is_no_results(exc):
-                raise
-            logger.info("Búsqueda sin resultados: %s", query)
-            continue
-        for hit in rows:
-            url = str(hit.get("url") or hit.get("href") or "").strip()
-            title = str(hit.get("title") or "").strip()
-            snippet = str(hit.get("snippet") or hit.get("body") or "").strip()
-            key = url or title
-            if not key or key in seen or (not title and not snippet):
-                continue
-            seen.add(key)
-            found.append({"title": title, "url": url, "snippet": snippet[:400]})
-            if len(found) >= MAX_SOURCES:
-                return found
-    return found
-
-
-def build_search_input(slots: dict[str, Any]) -> str:
+def build_estimator_input(slots: dict[str, Any]) -> str:
     lines = [
-        "Buscá en internet y estimá este arreglo en Argentina.",
+        "Buscá en Mercado Libre Argentina y en páginas de repuestos de Argentina.",
+        "No inventes precios.",
         f"Problema: {str(slots.get('descripcion_problema') or '').strip()}",
         f"Marca: {str(slots.get('marca') or '').strip()}",
         f"Modelo: {str(slots.get('modelo') or '').strip()}",
@@ -152,23 +83,7 @@ def build_search_input(slots: dict[str, Any]) -> str:
         value = str(slots.get(key) or "").strip()
         if value:
             lines.append(f"{label}: {value}")
-    lines.append(
-        "Usá marca, modelo, año y el resto de los datos del vehículo junto con el problema "
-        "para buscar precio de repuestos en Argentina y horas de mano de obra de taller."
-    )
     return "\n".join(lines)
-
-
-def build_estimator_input(slots: dict[str, Any], hits: list[dict[str, str]]) -> str:
-    lines = [build_search_input(slots), "", "Resultados de búsqueda:"]
-    for index, hit in enumerate(hits, start=1):
-        lines.append(f"{index}. {hit.get('title') or 'Sin título'}")
-        if hit.get("url"):
-            lines.append(str(hit["url"]))
-        if hit.get("snippet"):
-            lines.append(str(hit["snippet"]))
-        lines.append("")
-    return "\n".join(lines).strip()
 
 
 def parse_estimate_payload(text: str) -> dict[str, Any]:
@@ -226,7 +141,7 @@ def assemble_quote(slots: dict[str, Any], payload: dict[str, Any]) -> dict[str, 
     detail = (
         f"{descripcion} "
         f"Repuestos estimados: {parts_bit}. "
-        f"Mano de obra: {_hours_span(hours_low, hours_high)} × {_money(rate_pesos)} = {_money_span(labor_min, labor_max)}. "
+        f"Precio de mano de obra: {_hours_span(hours_low, hours_high)} × {_money(rate_pesos)} = {_money_span(labor_min, labor_max)}. "
         f"Total estimado: {_money_span(total_min, total_max)}, {PLUS_TAX}. "
         f"{ESTIMATE_DISCLAIMER}"
     )
@@ -262,27 +177,23 @@ def estimate_repair(
     slots: dict[str, Any],
     *,
     client: OpenAI | None = None,
-    search: SearchFn | None = None,
 ) -> dict[str, Any]:
-    """Sesión nueva de DeepSeek: no reutiliza el historial del chat con el cliente."""
+    """Sesión nueva de DeepSeek con búsqueda web. No reutiliza el chat con el cliente."""
     debug = llm_debug_active()
+    entrada = build_estimator_input(slots)
     request: dict[str, Any] = {
         "slots": slots,
-        "consultas": build_search_queries(slots) if debug else [],
-        "resultados": [],
-        "entrada": None,
-        "cache": False,
+        "entrada": entrada,
+        "modelo": settings.llm_estimator_model,
+        "busqueda": "web_search",
     }
     logged: dict[str, Any] | None = None
 
     def finish(result: dict[str, Any], **extra: Any) -> dict[str, Any]:
         nonlocal logged
         if debug:
-            if "hits" in extra:
-                request["resultados"] = extra["hits"]
-            if "entrada" in extra:
-                request["entrada"] = extra["entrada"]
-            request["cache"] = bool(extra.get("cache"))
+            if extra.get("cache"):
+                request["cache"] = True
             logged = {
                 "texto": extra.get("texto"),
                 "llamo_modelo": bool(extra.get("llamo_modelo")),
@@ -291,7 +202,7 @@ def estimate_repair(
         return result
 
     try:
-        return _estimate_repair(slots, client=client, search=search, finish=finish)
+        return _estimate_repair(slots, client=client, entrada=entrada, finish=finish)
     except Exception as exc:
         if debug:
             logged = {
@@ -308,8 +219,7 @@ def estimate_repair(
         if debug:
             log_quoter(
                 request,
-                logged
-                or {"texto": None, "llamo_modelo": False, "resultado": None},
+                logged or {"texto": None, "llamo_modelo": False, "resultado": None},
             )
 
 
@@ -317,29 +227,24 @@ def _estimate_repair(
     slots: dict[str, Any],
     *,
     client: OpenAI | None,
-    search: SearchFn | None,
+    entrada: str,
     finish: Callable[..., dict[str, Any]],
 ) -> dict[str, Any]:
     cache_key = estimate_cache_key(slots)
     cached = _cache_get(cache_key)
     if cached is not None:
         logger.info("Estimación mecánica servida desde caché: %s", cache_key)
-        quote = assemble_quote(slots, cached["payload"])
+        quote = assemble_quote(slots, cached)
         if quote.get("status") == "ok":
-            quote["fuentes"] = cached["hits"]
-            return finish(quote, hits=cached["hits"], cache=True)
+            return finish(quote, cache=True)
 
-    hits = gather_sources(slots, search or search_web)
-    if not sources_have_part_price(hits):
-        logger.info("Búsqueda mecánica sin precio de repuesto")
-        return finish(_revision(SIN_PRECIO_REPUESTO), hits=hits)
-
-    entrada = build_estimator_input(slots, hits)
     llm = client or build_client()
     kwargs: dict[str, Any] = {
-        "model": settings.llm_model,
+        "model": settings.llm_estimator_model,
         "instructions": load_estimator_prompt(),
         "input": entrada,
+        "tools": [WEB_SEARCH_TOOL],
+        "tool_choice": WEB_SEARCH_TOOL,
         "temperature": ESTIMATOR_TEMPERATURE,
         "timeout": SEARCH_TIMEOUT_SECONDS,
     }
@@ -350,8 +255,6 @@ def _estimate_repair(
     if not text:
         return finish(
             {"status": "error", "error": "estimacion_vacia"},
-            hits=hits,
-            entrada=entrada,
             llamo_modelo=True,
             texto="",
         )
@@ -361,8 +264,16 @@ def _estimate_repair(
         logger.warning("Estimación mecánica ilegible")
         return finish(
             {"status": "error", "error": "estimacion_invalida"},
-            hits=hits,
-            entrada=entrada,
+            llamo_modelo=True,
+            texto=text,
+        )
+    if payload.get("sin_precio") is True:
+        motivo = " ".join(str(payload.get("motivo") or "").split())
+        return finish(
+            {
+                "status": "sin_precio",
+                "motivo": motivo or "No encontré un precio publicado para este auto y este trabajo.",
+            },
             llamo_modelo=True,
             texto=text,
         )
@@ -370,24 +281,19 @@ def _estimate_repair(
         motivo = " ".join(str(payload.get("motivo") or "").split())
         return finish(
             _revision(motivo or "El problema necesita revisión del auto antes de estimar."),
-            hits=hits,
-            entrada=entrada,
             llamo_modelo=True,
             texto=text,
         )
     if payload.get("necesita_detalle") is True:
         return finish(
             _detail_request(slots, payload.get("faltan"), payload.get("motivo")),
-            hits=hits,
-            entrada=entrada,
             llamo_modelo=True,
             texto=text,
         )
     quote = assemble_quote(slots, payload)
     if quote.get("status") == "ok":
-        quote["fuentes"] = hits
-        _cache_put(cache_key, payload, hits)
-    return finish(quote, hits=hits, entrada=entrada, llamo_modelo=True, texto=text)
+        _cache_put(cache_key, payload)
+    return finish(quote, llamo_modelo=True, texto=text)
 
 
 def estimate_cache_key(slots: dict[str, Any]) -> str:
@@ -418,31 +324,17 @@ def _cache_get(key: str) -> dict[str, Any] | None:
         if time.monotonic() - entry["at"] > ttl:
             del _CACHE[key]
             return None
-        return copy.deepcopy({"payload": entry["payload"], "hits": entry["hits"]})
+        return copy.deepcopy(entry["payload"])
 
 
-def _cache_put(key: str, payload: dict[str, Any], hits: list[dict[str, str]]) -> None:
+def _cache_put(key: str, payload: dict[str, Any]) -> None:
     if float(settings.estimate_cache_ttl_hours or 0) <= 0:
         return
     with _CACHE_LOCK:
         _CACHE[key] = {
             "at": time.monotonic(),
             "payload": copy.deepcopy(payload),
-            "hits": copy.deepcopy(hits),
         }
-
-
-def _is_no_results(exc: BaseException) -> bool:
-    return exc.__class__.__name__ == "DDGSException" and "No results found" in str(exc)
-
-
-def sources_have_part_price(hits: list[dict[str, str]]) -> bool:
-    """Hay un monto en pesos en algún resultado. Sin eso no se publica una cifra."""
-    for hit in hits:
-        text = " ".join(str(hit.get(key) or "") for key in ("title", "snippet", "body"))
-        if _PART_PRICE.search(text):
-            return True
-    return False
 
 
 def _revision(motivo: str) -> dict[str, Any]:
@@ -540,10 +432,7 @@ def _parts_from_items(
         low_total += quantity * price[0]
         high_total += quantity * price[1]
         measure = "" if unit.lower() in ("", "u", "un", "unidad", "unidades") else f" {unit}"
-        if quantity == 1 and not measure:
-            labels.append(concept)
-        else:
-            labels.append(f"{concept} ({_hours_label(quantity)}{measure})")
+        labels.append(f"{concept}: {_hours_label(quantity)}{measure} × {_money_span(*map(_pesos, price))}")
         items.append(
             {
                 "concepto": concept,

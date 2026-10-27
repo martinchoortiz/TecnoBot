@@ -24,13 +24,6 @@ from tests.fakes import FakeChannel
 
 PHONE = "542644132300"
 OTHER = "5491100000000"
-HITS = [
-    {
-        "title": "Correa Gol",
-        "url": "https://ejemplo.test/correa",
-        "snippet": "kit de distribución $120000",
-    }
-]
 PAYLOAD = {
     "descripcion": "Cambio de correa de distribución",
     "detalle_repuestos": "kit de distribución",
@@ -145,7 +138,7 @@ def test_other_phone_does_not_log(session: Session, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(settings, "labor_hourly_rate_ars", 0)
     client = _EstimatorClient(json.dumps(PAYLOAD))
     with llm_debug_scope(session, "conv-other", OTHER):
-        result = estimate_repair(SLOTS, client=client, search=lambda _query: HITS)
+        result = estimate_repair(SLOTS, client=client)
     assert result["status"] == "ok"
     assert client.responses.kwargs is not None
     assert _rows(session) == []
@@ -158,7 +151,7 @@ def test_quoter_request_and_response_are_stored(
     raw = json.dumps(PAYLOAD)
     client = _EstimatorClient(raw)
     with llm_debug_scope(session, "conv-1", PHONE):
-        result = estimate_repair(SLOTS, client=client, search=lambda _query: HITS)
+        result = estimate_repair(SLOTS, client=client)
     assert result["status"] == "ok"
     rows = _rows(session)
     assert [row.kind for row in rows] == ["pedido_cotizador", "respuesta_cotizador"]
@@ -166,10 +159,9 @@ def test_quoter_request_and_response_are_stored(
     assert rows[0].conversation_id == "conv-1"
     pedido = rows[0].payload
     assert pedido["slots"]["descripcion_problema"] == "cambio de correa de distribución"
-    assert any("precio repuesto" in item for item in pedido["consultas"])
+    assert pedido["busqueda"] == "web_search"
     assert "cambio de correa de distribución" in pedido["entrada"]
-    assert pedido["resultados"][0]["url"] == "https://ejemplo.test/correa"
-    assert pedido["cache"] is False
+    assert "cache" not in pedido
     respuesta = rows[1].payload
     assert respuesta["llamo_modelo"] is True
     assert respuesta["texto"] == raw
@@ -177,23 +169,18 @@ def test_quoter_request_and_response_are_stored(
     assert respuesta["resultado"]["price"] == 180000
 
 
-def test_search_without_price_logs_revision_without_calling_the_model(
-    session: Session, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_missing_price_is_logged(session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "labor_hourly_rate_ars", 20000)
-    client = _EstimatorClient(json.dumps(PAYLOAD))
+    raw = json.dumps({"sin_precio": True, "motivo": "No hay precio del kit."})
+    client = _EstimatorClient(raw)
     with llm_debug_scope(session, "conv-2", "+5492645094418"):
-        result = estimate_repair(
-            SLOTS,
-            client=client,
-            search=lambda _query: [{"title": "Gol", "snippet": "sin monto", "url": "https://ejemplo.test"}],
-        )
-    assert result["status"] == "requiere_revision"
-    assert client.responses.kwargs is None
+        result = estimate_repair(SLOTS, client=client)
+    assert result["status"] == "sin_precio"
+    assert client.responses.kwargs is not None
     rows = _rows(session)
-    assert rows[1].payload["llamo_modelo"] is False
-    assert rows[1].payload["resultado"]["status"] == "requiere_revision"
-    assert rows[0].payload["entrada"] is None
+    assert rows[1].payload["llamo_modelo"] is True
+    assert rows[1].payload["resultado"]["status"] == "sin_precio"
+    assert "Mercado Libre" in rows[0].payload["entrada"]
     assert rows[0].phone == "+5492645094418"
 
 
@@ -202,17 +189,20 @@ def test_quoter_timeout_is_logged_and_still_raises(
 ) -> None:
     monkeypatch.setattr(settings, "labor_hourly_rate_ars", 20000)
 
-    def explode(_query: str) -> list[dict[str, str]]:
-        raise TimeoutError("html.duckduckgo.com timed out")
+    class _TimeoutClient:
+        def __init__(self) -> None:
+            self.responses = self
+
+        def create(self, **kwargs):
+            raise TimeoutError("web_search timed out")
 
     with llm_debug_scope(session, "conv-3", PHONE):
         with pytest.raises(TimeoutError):
-            estimate_repair(SLOTS, client=_EstimatorClient("{}"), search=explode)
+            estimate_repair(SLOTS, client=_TimeoutClient())
     rows = _rows(session)
     assert [row.kind for row in rows] == ["pedido_cotizador", "respuesta_cotizador"]
-    assert "precio repuesto" in rows[0].payload["consultas"][0]
+    assert rows[0].payload["busqueda"] == "web_search"
     assert rows[1].payload["resultado"]["error"] == "TimeoutError"
-    assert "duckduckgo" in rows[1].payload["resultado"]["mensaje"]
 
 
 @pytest.mark.asyncio
@@ -221,7 +211,7 @@ async def test_worker_thread_still_logs(session: Session, monkeypatch: pytest.Mo
     client = _EstimatorClient(json.dumps(PAYLOAD))
     with llm_debug_scope(session, "conv-4", PHONE):
         result = await asyncio.to_thread(
-            estimate_repair, SLOTS, client=client, search=lambda _query: HITS
+            estimate_repair, SLOTS, client=client
         )
     assert result["status"] == "ok"
     assert [row.kind for row in _rows(session)] == ["pedido_cotizador", "respuesta_cotizador"]
@@ -246,7 +236,6 @@ async def test_chat_decision_then_quoter_then_reply(
         "app.skills.mechanical_estimator.build_client",
         lambda: _EstimatorClient(json.dumps(PAYLOAD)),
     )
-    monkeypatch.setattr("app.skills.mechanical_estimator.search_web", lambda _query: HITS)
     incoming = IncomingMessage(
         conversation_ref="wa-1",
         text="cuánto sale la correa",

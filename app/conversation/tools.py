@@ -19,6 +19,10 @@ _skill = BatteryChangeSkill()
 _mechanical = MechanicalServiceSkill()
 
 TIPO_REVISION_BATERIA = "revision_bateria"
+SIN_PRECIO_CLIENTE = (
+    "No pude resolver su solicitud porque no encontré precios correctos para su auto. "
+    "Lo paso con un empleado."
+)
 
 
 def _slot_updates(args: dict[str, Any]) -> dict[str, Any]:
@@ -95,6 +99,46 @@ def _revision_fee(applies: bool) -> int | float | None:
     return int(fee) if fee == int(fee) else fee
 
 
+def _handoff_payload() -> dict[str, Any]:
+    return {
+        "status": "handed_off",
+        "motivo": "sin_precio",
+        "mensaje": SIN_PRECIO_CLIENTE,
+        "instruccion": (
+            "El hilo ya está derivado. Decile al cliente exactamente el campo mensaje. "
+            "No llames otra tool."
+        ),
+    }
+
+
+async def _handoff_sin_solucion(
+    store: ConversationStore,
+    conversation: Conversation,
+    channel: ChannelPort,
+    slots: dict[str, Any],
+    *,
+    detalle: str = "",
+) -> dict[str, Any]:
+    """Sin repuestos y horas no hay estimación: se deriva en ese momento."""
+    current = store.get(conversation.id)
+    if current is not None and current.state == ConversationState.HANDED_OFF.value:
+        return _handoff_payload()
+    note = "No se encontraron precios correctos para el auto."
+    auto = " ".join(
+        str(slots.get(field) or "").strip()
+        for field in ("marca", "modelo", "anio", "motor", "descripcion_problema")
+        if str(slots.get(field) or "").strip()
+    )
+    if auto:
+        note = f"{note} {auto}"
+    extra = " ".join(detalle.split())
+    if extra:
+        note = f"{note} ({extra})"
+    store.set_state(conversation.id, ConversationState.HANDED_OFF)
+    await channel.handoff_to_human(conversation.channel_ref, note, phone=conversation.phone)
+    return _handoff_payload()
+
+
 async def execute_tool(
     name: str,
     args: dict[str, Any],
@@ -124,15 +168,25 @@ async def execute_tool(
         return quote
 
     if name == "cotizar_mecanica_ia":
+        current = store.get(conv_id)
+        if current is not None and current.state == ConversationState.HANDED_OFF.value:
+            return _handoff_payload()
         slots = store.merge_vehicle_slots(conv_id, _mechanical_updates(args))
         _log_quote_call(name, slots)
         try:
             quote = await asyncio.to_thread(_mechanical.calculate_quote, slots)
-        except Exception:
+        except Exception as exc:
             logger.exception("Cotizador %s falló", name)
-            raise
+            return await _handoff_sin_solucion(
+                store,
+                conversation,
+                channel,
+                slots,
+                detalle=type(exc).__name__,
+            )
         _log_quote_response(name, quote)
-        if quote.get("status") == "ok":
+        status = quote.get("status")
+        if status == "ok":
             stored_price = quote.get("price")
             if stored_price is None and quote.get("es_rango"):
                 stored_price = (float(quote["total_min"]) + float(quote["total_max"])) / 2
@@ -143,7 +197,17 @@ async def execute_tool(
                 None if stored_price is None else float(stored_price),
                 quote.get("detail"),
             )
-        return quote
+            return quote
+        if status in ("need_slots", "requiere_revision"):
+            return quote
+        detalle = str(quote.get("motivo") or quote.get("error") or "")
+        return await _handoff_sin_solucion(
+            store,
+            conversation,
+            channel,
+            slots,
+            detalle=detalle,
+        )
 
     if name == "coordinar_turno":
         lugar = str(args.get("lugar_colocacion") or "")

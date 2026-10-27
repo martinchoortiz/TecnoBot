@@ -61,12 +61,16 @@ TOOLS: list[dict[str, Any]] = [
                 "ese arreglo o recambio, y el trabajo es concreto. Si es un síntoma sin causa conocida "
                 "o el cliente pide una revisión, no la llames: ofrecé turno de revisión. "
                 "No la uses para batería ni neumáticos. "
-                "Busca en internet y devuelve una estimación, no un precio cerrado. "
+                "Busca en Mercado Libre y en páginas de repuestos de Argentina y devuelve "
+                "cantidad, nombre y precio de cada repuesto, más las horas de mano de obra. "
+                "El sistema calcula la mano de obra y el total. No es un precio cerrado. "
                 "Si viene un rango, pasalo tal cual al cliente. "
                 "El total es siempre más impuestos: decilo así y no aclares el porcentaje ni el importe. "
-                "Si devuelve requiere_revision (la búsqueda no trajo un precio del repuesto, "
-                "no corresponde al auto, o hace falta verlo), no des precio: ofrecé revisión en el taller. "
-                "Si devuelve need_slots, preguntá solo esos datos y volvé a llamarla; no derives todavía."
+                "Si devuelve need_slots, preguntá solo esos datos y volvé a llamarla. "
+                "Si no devuelve repuestos y horas, el hilo ya está derivado: "
+                "status handed_off, decí el mensaje y no llames otra tool. "
+                "Si devuelve requiere_revision, el trabajo no se puede estimar sin ver el auto: "
+                "no des precio y ofrecé revisión en el taller."
             ),
             "parameters": {
                 "type": "object",
