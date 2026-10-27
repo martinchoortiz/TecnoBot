@@ -33,6 +33,7 @@ def get_engine() -> Engine:
 def init_db(engine: Engine | None = None) -> None:
     from app.models import conversation as _models  # noqa: F401
     from app.models import errors as _errors  # noqa: F401
+    from app.models import llm_log as _llm_log  # noqa: F401
 
     SQLModel.metadata.create_all(engine or get_engine())
 

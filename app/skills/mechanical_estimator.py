@@ -14,6 +14,7 @@ from typing import Any
 from openai import OpenAI
 
 from app.config import settings
+from app.conversation.llm_debug import llm_debug_active, log_quoter
 from app.conversation.llm_engine import build_client
 
 logger = logging.getLogger(__name__)
@@ -264,6 +265,61 @@ def estimate_repair(
     search: SearchFn | None = None,
 ) -> dict[str, Any]:
     """Sesión nueva de DeepSeek: no reutiliza el historial del chat con el cliente."""
+    debug = llm_debug_active()
+    request: dict[str, Any] = {
+        "slots": slots,
+        "consultas": build_search_queries(slots) if debug else [],
+        "resultados": [],
+        "entrada": None,
+        "cache": False,
+    }
+    logged: dict[str, Any] | None = None
+
+    def finish(result: dict[str, Any], **extra: Any) -> dict[str, Any]:
+        nonlocal logged
+        if debug:
+            if "hits" in extra:
+                request["resultados"] = extra["hits"]
+            if "entrada" in extra:
+                request["entrada"] = extra["entrada"]
+            request["cache"] = bool(extra.get("cache"))
+            logged = {
+                "texto": extra.get("texto"),
+                "llamo_modelo": bool(extra.get("llamo_modelo")),
+                "resultado": result,
+            }
+        return result
+
+    try:
+        return _estimate_repair(slots, client=client, search=search, finish=finish)
+    except Exception as exc:
+        if debug:
+            logged = {
+                "texto": None,
+                "llamo_modelo": False,
+                "resultado": {
+                    "status": "error",
+                    "error": type(exc).__name__,
+                    "mensaje": str(exc),
+                },
+            }
+        raise
+    finally:
+        if debug:
+            log_quoter(
+                request,
+                logged
+                or {"texto": None, "llamo_modelo": False, "resultado": None},
+            )
+
+
+def _estimate_repair(
+    slots: dict[str, Any],
+    *,
+    client: OpenAI | None,
+    search: SearchFn | None,
+    finish: Callable[..., dict[str, Any]],
+) -> dict[str, Any]:
     cache_key = estimate_cache_key(slots)
     cached = _cache_get(cache_key)
     if cached is not None:
@@ -271,18 +327,19 @@ def estimate_repair(
         quote = assemble_quote(slots, cached["payload"])
         if quote.get("status") == "ok":
             quote["fuentes"] = cached["hits"]
-            return quote
+            return finish(quote, hits=cached["hits"], cache=True)
 
     hits = gather_sources(slots, search or search_web)
     if not sources_have_part_price(hits):
         logger.info("Búsqueda mecánica sin precio de repuesto")
-        return _revision(SIN_PRECIO_REPUESTO)
+        return finish(_revision(SIN_PRECIO_REPUESTO), hits=hits)
 
+    entrada = build_estimator_input(slots, hits)
     llm = client or build_client()
     kwargs: dict[str, Any] = {
         "model": settings.llm_model,
         "instructions": load_estimator_prompt(),
-        "input": build_estimator_input(slots, hits),
+        "input": entrada,
         "temperature": ESTIMATOR_TEMPERATURE,
         "timeout": SEARCH_TIMEOUT_SECONDS,
     }
@@ -291,22 +348,46 @@ def estimate_repair(
     response = llm.responses.create(**kwargs)
     text = _response_text(response)
     if not text:
-        return {"status": "error", "error": "estimacion_vacia"}
+        return finish(
+            {"status": "error", "error": "estimacion_vacia"},
+            hits=hits,
+            entrada=entrada,
+            llamo_modelo=True,
+            texto="",
+        )
     try:
         payload = parse_estimate_payload(text)
     except (ValueError, json.JSONDecodeError):
         logger.warning("Estimación mecánica ilegible")
-        return {"status": "error", "error": "estimacion_invalida"}
+        return finish(
+            {"status": "error", "error": "estimacion_invalida"},
+            hits=hits,
+            entrada=entrada,
+            llamo_modelo=True,
+            texto=text,
+        )
     if payload.get("requiere_revision") is True:
         motivo = " ".join(str(payload.get("motivo") or "").split())
-        return _revision(motivo or "El problema necesita revisión del auto antes de estimar.")
+        return finish(
+            _revision(motivo or "El problema necesita revisión del auto antes de estimar."),
+            hits=hits,
+            entrada=entrada,
+            llamo_modelo=True,
+            texto=text,
+        )
     if payload.get("necesita_detalle") is True:
-        return _detail_request(slots, payload.get("faltan"), payload.get("motivo"))
+        return finish(
+            _detail_request(slots, payload.get("faltan"), payload.get("motivo")),
+            hits=hits,
+            entrada=entrada,
+            llamo_modelo=True,
+            texto=text,
+        )
     quote = assemble_quote(slots, payload)
     if quote.get("status") == "ok":
         quote["fuentes"] = hits
         _cache_put(cache_key, payload, hits)
-    return quote
+    return finish(quote, hits=hits, entrada=entrada, llamo_modelo=True, texto=text)
 
 
 def estimate_cache_key(slots: dict[str, Any]) -> str:

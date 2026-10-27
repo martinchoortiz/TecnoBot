@@ -7,6 +7,7 @@ from sqlmodel import Session
 
 from app.channel.base import ChannelPort, IncomingMessage
 from app.config import settings
+from app.conversation.llm_debug import llm_debug_scope
 from app.conversation.llm_engine import run_turn
 from app.conversation.state_store import ConversationStore
 from app.conversation.tools import execute_tool
@@ -87,7 +88,8 @@ async def handle_incoming(
             return {"status": "error", "error": "tool_failed"}
 
     try:
-        reply = await run_turn(_history(store, conversation.id), _run_tool)
+        with llm_debug_scope(session, conversation.id, conversation.phone or incoming.from_phone):
+            reply = await run_turn(_history(store, conversation.id), _run_tool)
     except Exception as exc:
         record_internal_error(
             session,

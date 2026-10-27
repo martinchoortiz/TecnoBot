@@ -8,6 +8,7 @@ from typing import Any
 from openai import OpenAI
 
 from app.config import settings
+from app.conversation.llm_debug import flush_llm_debug, log_chat_decision
 
 PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "system_prompt.md"
 MAX_TOOL_ROUNDS = 4
@@ -244,36 +245,58 @@ async def run_turn(
         {"role": "system", "content": load_system_prompt()},
         *history,
     ]
-    for _ in range(MAX_TOOL_ROUNDS):
-        kwargs: dict[str, Any] = {
-            "model": settings.llm_model,
-            "messages": messages,
-            "tools": TOOLS,
-        }
-        if settings.llm_disable_thinking:
-            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
-        response = llm.chat.completions.create(**kwargs)
-        choice = response.choices[0].message
-        tool_calls = getattr(choice, "tool_calls", None) or []
-        if not tool_calls:
-            return (choice.content or "").strip()
-
-        messages.append(_message_dump(choice))
-        for call in tool_calls:
-            name = call.function.name
-            try:
-                args = json.loads(call.function.arguments or "{}")
-            except json.JSONDecodeError:
-                args = {}
-            if not isinstance(args, dict):
-                args = {}
-            result = await execute_tool(name, args)
-            messages.append(
+    try:
+        for round_index in range(MAX_TOOL_ROUNDS):
+            kwargs: dict[str, Any] = {
+                "model": settings.llm_model,
+                "messages": messages,
+                "tools": TOOLS,
+            }
+            if settings.llm_disable_thinking:
+                kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+            response = llm.chat.completions.create(**kwargs)
+            choice = response.choices[0].message
+            tool_calls = getattr(choice, "tool_calls", None) or []
+            parsed: list[tuple[Any, str, dict[str, Any]]] = []
+            for call in tool_calls:
+                name = call.function.name
+                try:
+                    args = json.loads(call.function.arguments or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                if not isinstance(args, dict):
+                    args = {}
+                parsed.append((call, name, args))
+            log_chat_decision(
                 {
-                    "role": "tool",
-                    "tool_call_id": call.id,
-                    "content": json.dumps(result, ensure_ascii=False),
+                    "ronda": round_index + 1,
+                    "texto": (choice.content or "").strip() or None,
+                    "herramientas": [
+                        {"nombre": name, "argumentos": args} for _, name, args in parsed
+                    ],
                 }
             )
+            flush_llm_debug()
+            if not tool_calls:
+                return (choice.content or "").strip()
 
-    return "Disculpá, no pude cerrar la consulta. Te derivo con un compañero del taller."
+            messages.append(_message_dump(choice))
+            for call, name, args in parsed:
+                result = await execute_tool(name, args)
+                flush_llm_debug()
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "content": json.dumps(result, ensure_ascii=False),
+                    }
+                )
+
+        aviso = "Disculpá, no pude cerrar la consulta. Te derivo con un compañero del taller."
+        log_chat_decision(
+            {"ronda": MAX_TOOL_ROUNDS, "texto": aviso, "herramientas": [], "agotado": True}
+        )
+        flush_llm_debug()
+        return aviso
+    finally:
+        flush_llm_debug()

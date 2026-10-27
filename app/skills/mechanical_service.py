@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from typing import Any
 
+from app.conversation.llm_debug import log_quoter
 from app.skills.base import Skill
 from app.skills.mechanical_estimator import SLOT_KEYS, estimate_repair, resolve_hourly_rate
 
@@ -25,10 +26,27 @@ class MechanicalServiceSkill(Skill):
     def calculate_quote(self, slots: dict[str, Any]) -> dict[str, Any]:
         missing = self.missing_slots(slots)
         if missing:
-            return {"status": "need_slots", "missing": missing}
+            result = {"status": "need_slots", "missing": missing}
+            _log_quoter_without_model(slots, result)
+            return result
         rate = resolve_hourly_rate(slots)
         if rate is None:
-            return {"status": "error", "error": "falta_valor_hora"}
+            result = {"status": "error", "error": "falta_valor_hora"}
+            _log_quoter_without_model(slots, result)
+            return result
         prepared = dict(slots)
         prepared["valor_hora_mano_de_obra"] = rate
         return self._estimator(prepared)
+
+
+def _log_quoter_without_model(slots: dict[str, Any], result: dict[str, Any]) -> None:
+    log_quoter(
+        {
+            "slots": slots,
+            "consultas": [],
+            "resultados": [],
+            "entrada": None,
+            "cache": False,
+        },
+        {"texto": None, "llamo_modelo": False, "resultado": result},
+    )
